@@ -15,28 +15,6 @@ my $DevIP ;
 my $UserName ;
 my $Password ;
 
-# ReadMode ('cbreak') ;
-# while (1) {
-#   
-#   	my $Tmp1 = [gettimeofday] ;
-#    my $Tmp3 ;
-#   	my $Tmp2 = ReadKey(-1) ;
-#   	do {
-#    	$Tmp3 = [gettimeofday] ;
-#    	$Tmp3 = tv_interval($Tmp1,$Tmp3) ;
-#    	printf "\nCurrently elapsed time interval : $Tmp3" ;
-#    	sleep 1 ;
-#    } while ($Tmp3 < 10) ;
-#   	if (!(defined $Tmp2)) {
-#   		print "Got nothin in last 10s\n" ;
-#   	} else {
-#   		print "Got : $Tmp2 : in the last 10s\n" ;
-#   		exit(0) ;
-#   	}
-#   
-# }
-
-
 my $OptionRetVal = GetOptions (	'debug' => \$Debug, 'ip=s' => \$DevIP, 'un=s' => \$UserName, 'pw=s' => \$Password );
 
 assert ((defined $DevIP), "mPower Unit IP Not Specified (Use -ip=xxx.xxx.xxx.xxx)") ;
