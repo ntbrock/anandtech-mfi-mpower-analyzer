@@ -17,11 +17,12 @@ my $Password ;
 
 my $OptionRetVal = GetOptions (	'debug' => \$Debug, 'ip=s' => \$DevIP, 'un=s' => \$UserName, 'pw=s' => \$Password );
 
-assert ((defined $DevIP), "mPower Unit IP Not Specified (Use -ip=xxx.xxx.xxx.xxx)") ;
-assert ((defined $UserName), "Username for mPower Not Specified (Use -un=username)") ;
-assert ((defined $Password), "Password for mPower Not Specified (Use -pw=password)") ;
+if (!((defined $DevIP) && (defined $UserName) && (defined $Password))) {
+	printf "\nMissing arguments!\nUsage: perl mFi_mPower_CLI.pl -ip=xxx.xxx.xxx.xxx -un=username -pw=password\n";
+	exit(1) ;
+}
 
-my $mFiHostSSH = Net::SSH::Perl->new($DevIP);
+my $mFiHostSSH = Net::SSH::Perl->new($DevIP, protocol => 2);
 $mFiHostSSH->login($UserName, $Password) || die "\nUnable to SSH into $DevIP\n" ;
 
 my ($cmdout, $cmderr, $Enabled1ExitStatus, $Enabled3ExitStatus, $Enabled4ExitStatus, $Tmp) ;
@@ -34,15 +35,21 @@ my $CSV_FileName ;
 my $CSV_FileHandle ;
 my $CSVFileStr ;
 
-# my $TK = Term::TermKey->new (\*STDIN);
-
-
 my $cmd = "cat /proc/power/enabled1" ;
-($cmdout, $cmderr, $Enabled1ExitStatus) = $mFiHostSSH->cmd($cmd) ;
+eval { ($cmdout, $cmderr, $Enabled1ExitStatus) = $mFiHostSSH->cmd($cmd); } ;
+if ($@) {
+	&WaitForConnection ();
+}
 $cmd = "cat /proc/power/enabled3" ;
-($cmdout, $cmderr, $Enabled3ExitStatus) = $mFiHostSSH->cmd($cmd) ;
+eval { ($cmdout, $cmderr, $Enabled3ExitStatus) = $mFiHostSSH->cmd($cmd) ; };
+if ($@) {
+	&WaitForConnection ();
+}
 $cmd = "cat /proc/power/enabled4" ;
-($cmdout, $cmderr, $Enabled4ExitStatus) = $mFiHostSSH->cmd($cmd) ;
+eval { ($cmdout, $cmderr, $Enabled4ExitStatus) = $mFiHostSSH->cmd($cmd) ; };
+if ($@) {
+	&WaitForConnection ();
+}
 
 if ($Enabled1ExitStatus == 1) {
 
@@ -224,12 +231,26 @@ while (1) {
 						}
 						do {
 							$SampleStartTime = [gettimeofday] ;
-							($cmdout,$cmderr,$ExitStatus) = $mFiHostSSH->cmd($cmd);
+							my $SSHConnectionOK = 1 ;
+							do {
+								do {
+									eval { ($cmdout,$cmderr,$ExitStatus) = $mFiHostSSH->cmd($cmd); };
+									if ($@) {
+										&WaitForConnection() ;
+									}
+								} while ($@) ;
+								if (not defined $cmderr) {
+									$SSHConnectionOK = 1 ;
+								} else {
+									$SSHConnectionOK = 0 ;
+								}
+							} while ($SSHConnectionOK != 1);
 							my $CurrTime = [gettimeofday] ;
 							my @PowerStrings = split /\n/, $cmdout ;
 							my $SockCtr = 0;
 							foreach my $PowerNum (@PowerStrings) {
-								assert (($SockCtr < $NumOutlets), 'Error in mPower unit output for power query: $cmd , $cmdout');
+								my $ErrorStr = "Error in mPower unit output for power query: " . $cmd . "with output: " . $cmdout ;
+								assert (($SockCtr < $NumOutlets), $ErrorStr);
 								$CurrPower[$SockCtr ++] = $PowerNum ;
 							}
 							my $Elapsed = tv_interval ($SampleStartTime, $CurrTime );
@@ -304,10 +325,23 @@ sub UpdateSocketName {
 
 	my $SocketNumToChange = shift ; # 0 start
 	my $NewName = shift ;
+	my $SSHConnectionOK = 1 ;
 	$cmd = sprintf "sed -i '/port.%d.label.*/c\\port.%d.label=%s' /var/etc/persistent/cfg/config_file", 
 		$SocketNumToChange, $SocketNumToChange, $NewName ;
-	($cmdout,$cmderr,$ExitStatus) = $mFiHostSSH->cmd($cmd);
-	print "Command:\n $cmd \nOutput:\n $cmdout" if $Debug ;
+	do {
+		do {
+			eval { ($cmdout,$cmderr,$ExitStatus) = $mFiHostSSH->cmd($cmd); } ;
+			print "Command:\n $cmd \nOutput:\n $cmdout" if $Debug ;
+			if ($@) {
+				&WaitForConnection();
+			}
+		} while ($@);
+		if (not defined $cmderr) {
+			$SSHConnectionOK = 1 ;
+		} else {
+			$SSHConnectionOK = 0 ;
+		}
+	} while ($SSHConnectionOK != 1) ;
 	&RefreshOutletNames () ;
 
 }
@@ -317,9 +351,22 @@ sub ToggleSocketStatus {
 	
 	my $SocketNumToToggle = shift ;
 	my $ValToPush = ($CurrentOutletStatus[$SocketNumToToggle - 1] eq "ON") ? 0 : 1 ;
+	my $SSHConnectionOK = 1 ;
 	$cmd = sprintf "echo \"%d\" > /proc/power/relay%d",  $ValToPush, $SocketNumToToggle ;
-	($cmdout,$cmderr,$ExitStatus) = $mFiHostSSH->cmd($cmd);
-	print "Command:\n $cmd \nOutput:\n $cmdout" if $Debug ;
+	do {
+		do {
+			eval { ($cmdout,$cmderr,$ExitStatus) = $mFiHostSSH->cmd($cmd); };
+			print "Command:\n $cmd \nOutput:\n $cmdout" if $Debug ;
+			if ($@) {
+				&WaitForConnection() ;
+			}
+		} while ($@);
+		if (not defined $cmderr) {
+			$SSHConnectionOK = 1 ;
+		} else {
+			$SSHConnectionOK = 0 ;
+		}
+	} while ($SSHConnectionOK != 1) ;
 	&RefreshOutletStatus () ;
 
 }
@@ -329,8 +376,21 @@ sub RefreshOutletStatus {
 	my $ExitStatus ;
 	for ($Tmp = 1; $Tmp <= $NumOutlets; $Tmp ++) {
 		$cmd = sprintf "cat /proc/power/relay%d", $Tmp ;
-		($cmdout,$cmderr,$ExitStatus) = $mFiHostSSH->cmd($cmd);
-		print "Command:\n $cmd \nOutput:\n $cmdout" if $Debug ;
+		my $SSHConnectionOK = 1 ;
+		do {
+			do {
+				eval { ($cmdout,$cmderr,$ExitStatus) = $mFiHostSSH->cmd($cmd); };
+				print "Command:\n $cmd \nOutput:\n $cmdout" if $Debug ;
+				if ($@) {
+					&WaitForConnection() ;
+				}
+			} while ($@) ;
+			if (not defined $cmderr) {
+				$SSHConnectionOK = 1 ;
+			} else {
+				$SSHConnectionOK = 0;
+			}
+		} while ($SSHConnectionOK != 1) ;
 		$CurrentOutletStatus[$Tmp - 1] = ($cmdout == 1) ? "ON" : "OFF" ;
 	}
 
@@ -339,8 +399,21 @@ sub RefreshOutletStatus {
 sub RefreshOutletNames {
 
 	$cmd = "grep label /var/etc/persistent/cfg/config_file" ;
-	($cmdout, $cmderr, $Tmp) = $mFiHostSSH->cmd($cmd) ;
-	print "Command:\n $cmd \nOutput:\n $cmdout" if $Debug ;
+	my $SSHConnectionOK = 1 ;
+	do {
+		do {
+			eval { ($cmdout, $cmderr, $Tmp) = $mFiHostSSH->cmd($cmd) ; };
+			print "Command:\n $cmd \nOutput:\n $cmdout" if $Debug ;
+			if ($@) {
+				&WaitForConnection();
+			}
+		} while ($@);
+		if (not defined $cmderr) {
+			$SSHConnectionOK = 1;
+		} else {
+			$SSHConnectionOK = 0 ;
+		}
+	} while ($SSHConnectionOK != 1);
 	for ($Tmp = 0; $Tmp < $NumOutlets; $Tmp ++) {
 
 		($CurrentOutletNames[$Tmp]) = ($cmdout =~ /port.$Tmp.label=(.*)/);
@@ -349,6 +422,28 @@ sub RefreshOutletNames {
 
 }
  
+sub WaitForConnection {
+
+	my $RetryCount = 0 ;
+	eval { ($cmdout,$cmderr,$Tmp) = $mFiHostSSH->cmd("cat /proc/power/active_pwr1") } ;
+	# Will result in $@ being non-zero if it fails
+	return if !($@) ;
+	while ($@) {
+		sleep 1 ;
+		$RetryCount ++ ;
+		if ($RetryCount > 100) {
+			print "\nToo many retries while trying to re-establish connection. Please check if mPower unit is accessible on the network. Exiting....\n" ;
+			exit(1) ;
+		}
+		eval { $mFiHostSSH = Net::SSH::Perl->new($DevIP, protocol => 2) };
+	}
+	do {
+		sleep 1 ;
+		eval { $mFiHostSSH->login($UserName, $Password) || die "\nUnable to SSH into $DevIP\n" } ;
+	} while ($@) ;		
+
+}
+
 sub ClearScreen {
  
  	system $^O eq 'MSWin32' ? 'cls' : 'clear';
@@ -359,5 +454,7 @@ END {
 	ReadMode 0 ;
 	if (defined $mFiHostSSH) {
 		$mFiHostSSH->cmd("exit");
+		close $mFiHostSSH->sock ;
+		undef $mFiHostSSH ;
 	}
 }
