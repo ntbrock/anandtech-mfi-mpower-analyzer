@@ -1,0 +1,1 @@
+Perl script to control / perform real time power measurement with Ubiquiti's mFi mPower units. Units must be running v2.0.7 or later firmware.
